@@ -1,28 +1,63 @@
 package com.whispercppdemo.ui.main
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toFile
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.whispercppdemo.R
+import kotlinx.coroutines.launch
 
 @Composable
+
 fun MainScreen(viewModel: MainScreenViewModel) {
+    val context = LocalContext.current
+    val uiEvent by viewModel.uiEvent
+    val scope = rememberCoroutineScope()
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        uri?.let {
+            scope.launch {
+
+                viewModel.loadBinModelFromUri(context, it)
+
+            }
+        }
+    }
+
+    // Trigger file picker when ViewModel emits event
+    LaunchedEffect(uiEvent) {
+        when (uiEvent) {
+            is MainScreenViewModel.UiEvent.OpenBinFilePicker -> {
+                launcher.launch(arrayOf("*/*")) // or "application/octet-stream"
+                viewModel.uiEvent.value = null
+            }
+            else -> {}
+        }
+    }
+
     MainScreen(
         canTranscribe = viewModel.canTranscribe,
         isRecording = viewModel.isRecording,
         messageLog = viewModel.dataLog,
         onBenchmarkTapped = viewModel::benchmark,
-        onTranscribeSampleTapped = viewModel::transcribeSample,
-        onRecordTapped = viewModel::toggleRecord
+        onTranscribeSampleTapped = viewModel::triggerBinFilePickerTranscribeSample, // 🔹 Hooked here,
+        onRecordTapped = viewModel::toggleRecord,
+        onSelectModelFile = viewModel::triggerBinFilePicker // 🔹 Hooked here
     )
 }
 
@@ -34,7 +69,8 @@ private fun MainScreen(
     messageLog: String,
     onBenchmarkTapped: () -> Unit,
     onTranscribeSampleTapped: () -> Unit,
-    onRecordTapped: () -> Unit
+    onRecordTapped: () -> Unit,
+    onSelectModelFile: () -> Unit
 ) {
     Scaffold(
         topBar = {
@@ -51,6 +87,7 @@ private fun MainScreen(
             Column(verticalArrangement = Arrangement.SpaceBetween) {
                 Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                     BenchmarkButton(enabled = canTranscribe, onClick = onBenchmarkTapped)
+
                     TranscribeSampleButton(enabled = canTranscribe, onClick = onTranscribeSampleTapped)
                 }
                 RecordButton(
@@ -58,6 +95,10 @@ private fun MainScreen(
                     isRecording = isRecording,
                     onClick = onRecordTapped
                 )
+                Button(onClick = onSelectModelFile) {
+                    Text("Select Model")
+
+                }
             }
             MessageLog(messageLog)
         }

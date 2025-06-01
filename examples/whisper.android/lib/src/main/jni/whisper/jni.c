@@ -176,12 +176,14 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullTranscribe(
     params.print_timestamps = true;
     params.print_special = false;
     params.translate = false;
-    params.language = "en";
+    params.language = "tr";
     params.n_threads = num_threads;
     params.offset_ms = 0;
     params.no_context = true;
+    params.max_len=1;
+    params.token_timestamps=true;
+    params.split_on_word=true;
     params.single_segment = false;
-
     whisper_reset_timings(context);
 
     LOGI("About to run whisper_full");

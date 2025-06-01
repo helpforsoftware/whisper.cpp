@@ -3621,6 +3621,7 @@ int whisper_ctx_init_openvino_encoder(
 
 struct whisper_context_params whisper_context_default_params() {
     struct whisper_context_params result = {
+
         /*.use_gpu              =*/ true,
         /*.flash_attn           =*/ false,
         /*.gpu_device           =*/ 0,
@@ -5932,8 +5933,8 @@ struct whisper_full_params whisper_full_default_params(enum whisper_sampling_str
         /*.token_timestamps  =*/ false,
         /*.thold_pt          =*/ 0.01f,
         /*.thold_ptsum       =*/ 0.01f,
-        /*.max_len           =*/ 0,
-        /*.split_on_word     =*/ false,
+        /*.max_len           =*/ 5,
+        /*.split_on_word     =*/ true,
         /*.max_tokens        =*/ 0,
 
         /*.debug_mode        =*/ false,
@@ -5960,7 +5961,7 @@ struct whisper_full_params whisper_full_default_params(enum whisper_sampling_str
         /*.temperature_inc   =*/  0.2f,
         /*.entropy_thold     =*/  2.4f,
         /*.logprob_thold     =*/ -1.0f,
-        /*.no_speech_thold   =*/  0.6f,
+        /*.no_speech_thold   =*/  0.01f,
 
         /*.greedy            =*/ {
             /*.best_of   =*/ -1,

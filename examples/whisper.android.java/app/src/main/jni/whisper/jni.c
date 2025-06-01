@@ -172,16 +172,18 @@ Java_com_whispercpp_java_whisper_WhisperLib_fullTranscribe(
     // The below adapted from the Objective-C iOS sample
     struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     params.print_realtime = true;
-    params.print_progress = false;
+    params.print_progress = true;
     params.print_timestamps = true;
     params.print_special = false;
     params.translate = false;
-    params.language = "en";
+    params.language = "tr";
     params.n_threads = num_threads;
     params.offset_ms = 0;
     params.no_context = true;
     params.single_segment = false;
-
+    params.max_len=1;
+    params.token_timestamps=true;
+    params.split_on_word=true;
     whisper_reset_timings(context);
 
     LOGI("About to run whisper_full");

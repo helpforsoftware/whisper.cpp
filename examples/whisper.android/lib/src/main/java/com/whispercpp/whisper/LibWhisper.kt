@@ -74,11 +74,11 @@ class WhisperContext private constructor(private var ptr: Long) {
             return WhisperContext(ptr)
         }
 
-        fun createContextFromAsset(assetManager: AssetManager, assetPath: String): WhisperContext {
-            val ptr = WhisperLib.initContextFromAsset(assetManager, assetPath)
+        fun createContext( modelPath: String): WhisperContext {
+            val ptr = WhisperLib.initContext(modelPath)
 
             if (ptr == 0L) {
-                throw java.lang.RuntimeException("Couldn't create context from asset $assetPath")
+                throw java.lang.RuntimeException("Couldn't create context from asset $modelPath")
             }
             return WhisperContext(ptr)
         }

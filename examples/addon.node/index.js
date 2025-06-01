@@ -18,7 +18,7 @@ const whisperParams = {
   translate: true,
   no_timestamps: false,
   audio_ctx: 0,
-  max_len: 0,
+  max_len: 1,
   progress_callback: (progress) => {
       console.log(`progress: ${progress}%`);
     }

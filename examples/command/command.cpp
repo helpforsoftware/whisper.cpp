@@ -262,7 +262,7 @@ static int process_command_list(struct whisper_context * ctx, audio_async &audio
         return 2;
     }
 
-    int max_len = 0;
+    int max_len = 1;
 
     std::vector<std::vector<whisper_token>> allowed_tokens;
 

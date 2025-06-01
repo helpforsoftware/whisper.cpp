@@ -15,10 +15,10 @@ const whisperParamsMock = {
   flash_attn: false,
   no_prints: true,
   comma_in_time: false,
-  translate: true,
+  translate: false,
   no_timestamps: false,
   audio_ctx: 0,
-  max_len: 0,
+  max_len: 1,
   prompt: "",
   print_progress: false,
   progress_callback: (progress) => {
