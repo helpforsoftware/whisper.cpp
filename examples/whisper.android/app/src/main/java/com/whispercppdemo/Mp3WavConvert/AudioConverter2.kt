@@ -22,7 +22,8 @@ class AudioConverter {
     suspend fun convertMp3ToWav(
         context: Context,
         inputMp3Uri: Uri,
-    ): Boolean = withContext(Dispatchers.IO) {
+
+    ): File? = withContext(Dispatchers.IO) {
         var extractor: MediaExtractor? = null
         var decoder: MediaCodec? = null
         // outputStream is managed by .use{} block, no need for top-level var for closing
@@ -37,7 +38,7 @@ class AudioConverter {
             val trackIndex = findAudioTrack(extractor)
             if (trackIndex < 0) {
                 Log.e(TAG, "No audio track found in MP3 file")
-                return@withContext false
+                return@withContext null
             }
 
             extractor.selectTrack(trackIndex)
@@ -51,14 +52,8 @@ class AudioConverter {
             val outputFormat = decoder.outputFormat
             Log.d(TAG, "Decoder output format: $outputFormat")
 
-            val resolver = context.contentResolver
-            val contentValues = ContentValues().apply {
-                put(MediaStore.Audio.Media.DISPLAY_NAME, "outputcsk.wav")
-                put(MediaStore.Audio.Media.MIME_TYPE, "audio/wav")
-                put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/")
-            }
 
-            val audioUri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, contentValues)
+            val outputFile = File(context.getExternalFilesDir(null), "outputcsk.wav")
 
             // Get audio format info
             val sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
@@ -69,32 +64,24 @@ class AudioConverter {
 
             val pcmData: ByteArray // Declare pcmData here to be accessible later
 
-            audioUri?.let { uri ->
-                resolver.openOutputStream(uri)?.use { outputStream ->
-                    // Write placeholder WAV header
-                    val wavHeader = createWavHeader(sampleRate, channelCount, bitDepth)
-                    outputStream.write(wavHeader)
 
-                    // Decode and write PCM data
-                    pcmData = decodeToPcm(extractor, decoder) // Assign to the outer pcmData
-                    outputStream.write(pcmData)
-                    updateWavHeaderForUri(context, uri, sampleRate, channelCount, bitDepth, pcmData.size)
-                    // Stream is automatically closed by .use{} block here
-                }
 
-                // IMPORTANT: Update the WAV header with the actual sizes AFTER all data is written and stream is closed
+            FileOutputStream(outputFile).use { outputStream ->
+                val wavHeader = createWavHeader(sampleRate, channelCount, bitDepth)
+                outputStream.write(wavHeader)
 
-            } ?: run {
-                Log.e(TAG, "Failed to create output WAV URI")
-                return@withContext false
+                pcmData = decodeToPcm(extractor, decoder)
+                outputStream.write(pcmData)
+
+                updateWavHeaderForFile(outputFile, sampleRate, channelCount, bitDepth, pcmData.size)
             }
 
-            Log.d(TAG, "Successfully converted MP3 to WAV")
-            true
 
+            // IMPORTANT: Update the WAV header with the actual sizes AFTER all data is written and stream is closed
+            return@withContext outputFile
         } catch (e: Exception) {
             Log.e(TAG, "Error converting MP3 to WAV", e)
-            false
+            null
         } finally {
             extractor?.release()
             decoder?.stop()
@@ -102,6 +89,32 @@ class AudioConverter {
             // outputStream is closed by .use{} or handled by updateWavHeaderForUri
         }
     }
+private fun updateWavHeaderForFile(
+    file: File,
+    sampleRate: Int,
+    channels: Int,
+    bitsPerSample: Int,
+    dataSize: Int
+) {
+    try {
+        val fullData = file.readBytes()
+
+
+        if (fullData.size < 44) {
+            Log.e(TAG, "WAV data invalid or too short for header update")
+            return
+        }
+
+        val correctedHeader = createWavHeaderWithSizes(sampleRate, channels, bitsPerSample, dataSize)
+
+        FileOutputStream(file, false).use { out ->
+            out.write(correctedHeader)
+            out.write(fullData.copyOfRange(44, fullData.size))
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "Failed to update WAV header", e)
+    }
+}
 
     private fun findAudioTrack(extractor: MediaExtractor): Int {
         for (i in 0 until extractor.trackCount) {
@@ -115,8 +128,8 @@ class AudioConverter {
     }
 
     private fun decodeToPcm(extractor: MediaExtractor, decoder: MediaCodec): ByteArray {
-        val inputBuffers = decoder.inputBuffers
-        val outputBuffers = decoder.outputBuffers // Note: Deprecated, use getOutputBuffer(int)
+      //  val inputBuffers = decoder.inputBuffers
+      //  val outputBuffers = decoder.outputBuffers // Note: Deprecated, use getOutputBuffer(int)
         val bufferInfo = BufferInfo()
         val pcmData = ByteArrayOutputStream()
 
@@ -128,8 +141,9 @@ class AudioConverter {
             if (!inputDone) {
                 val inputBufferIndex = decoder.dequeueInputBuffer(TIMEOUT_USEC)
                 if (inputBufferIndex >= 0) {
-                    val inputBuffer = inputBuffers[inputBufferIndex]
-                    val sampleSize = extractor.readSampleData(inputBuffer, 0)
+                    val inputBuffer = decoder.getInputBuffer(inputBufferIndex)
+
+                    val sampleSize = extractor.readSampleData(inputBuffer!!, 0)
 
                     if (sampleSize < 0) {
                         // End of stream

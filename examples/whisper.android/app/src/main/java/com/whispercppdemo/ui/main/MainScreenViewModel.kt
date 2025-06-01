@@ -26,6 +26,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import android.webkit.MimeTypeMap
 import com.whispercppdemo.Mp3WavConvert.AudioConverter
+import java.io.FileOutputStream
+import java.io.InputStream
 
 fun Context.getFileExtensionFromUri(uri: Uri): String? {
     // Try to get file extension from Uri path first
@@ -109,45 +111,12 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
     suspend private fun convertSelectedAudio(context:Context,uri: Uri)  =  withContext(Dispatchers.IO) {
       //  val outputPath = "${getExternalFilesDir(Environment.DIRECTORY_MUSIC)}/output.wav"
        // val inputUri = Uri.parse("content://com.android.externalstorage.documents/document/primary%3AMusic%2Finput.mp3")
-        val outputUri = Uri.parse("content://com.android.externalstorage.documents/document/primary%3AMusic%2Foutputcsk.wav")
+      //  val outputUri = Uri.parse("content://com.android.externalstorage.documents/document/primary%3AMusic%2Foutputcsk.wav")
         val audioConverter = AudioConverter()
-        val success = audioConverter.convertMp3ToWav(context, uri)
+        val file = audioConverter.convertMp3ToWav(context, uri)
 
+        return@withContext file
 
-
-        if (success) {
-            printMessage ("Conversion successful!")
-            return@withContext outputUri.toFile()
-            // Handle success
-        } else {
-            printMessage ("Conversion failed!")
-            // Handle error
-        }
-
-
-           /* val result = AudioConverterHelper(context).convertAudioFile(
-                inputUri = uri,
-                outputFileName = "converted_audio.wav",
-                targetSampleRate = 44100
-            ) { progress ->
-
-                // runOnUiThread {
-                // Update UI with progress
-               // withContext(Dispatchers.IO) {
-
-                viewModelScope.launch(Dispatchers.Main) {
-                    printMessage(progress)
-                }
-              //  }
-
-
-            }
-
-            result?.let {
-                // Conversion successful
-                return@withContext it.absolutePath
-            }
-*/
         }
 
     private suspend fun loadBaseModel(context:Context ,uri: Uri) = withContext(Dispatchers.IO) {
