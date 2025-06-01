@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.util.Log
 import androidx.compose.runtime.getValue
@@ -16,7 +17,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import com.whispercppdemo.Mp3WavConvert.AudioConverterHelper
+
 import com.whispercppdemo.media.decodeWaveFile
 import com.whispercppdemo.recorder.Recorder
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +26,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 import android.webkit.MimeTypeMap
+import androidx.annotation.RequiresApi
 import com.whispercppdemo.Mp3WavConvert.AudioConverter
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -108,7 +110,8 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
         application.copyData("samples", samplesPath, ::printMessage)
         printMessage("All data copied to working directory.\n")
     }
-    suspend private fun convertSelectedAudio(context:Context,uri: Uri)  =  withContext(Dispatchers.IO) {
+    @RequiresApi(Build.VERSION_CODES.Q)
+    suspend private fun convertSelectedAudio(context:Context, uri: Uri)  =  withContext(Dispatchers.IO) {
       //  val outputPath = "${getExternalFilesDir(Environment.DIRECTORY_MUSIC)}/output.wav"
        // val inputUri = Uri.parse("content://com.android.externalstorage.documents/document/primary%3AMusic%2Finput.mp3")
       //  val outputUri = Uri.parse("content://com.android.externalstorage.documents/document/primary%3AMusic%2Foutputcsk.wav")
@@ -160,10 +163,14 @@ class MainScreenViewModel(private val application: Application) : ViewModel() {
     fun transcribeSample(context: Context, uri: Uri)  = viewModelScope.launch {
         val extension = context.getFileExtensionFromUri(uri)
 
-        if (extension!="bin") {
-            convertSelectedAudio(context,uri).let { uri }.let { transcribeAudio(uri) }
+        if (extension != "bin") {
+            val convertedFile = convertSelectedAudio(context, uri)
+            if (convertedFile != null) {
+                transcribeAudio(convertedFile.toUri())
+            }
             return@launch
         }
+
 
         else
         transcribeAudio(uri)

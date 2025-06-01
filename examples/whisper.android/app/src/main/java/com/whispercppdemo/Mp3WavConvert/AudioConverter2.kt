@@ -7,6 +7,10 @@ import android.media.MediaCodec.BufferInfo
 import android.net.Uri
 import android.provider.MediaStore
 import android.util.Log
+import io.github.nailik.androidresampler.Resampler
+import io.github.nailik.androidresampler.ResamplerConfiguration
+import io.github.nailik.androidresampler.data.ResamplerChannel
+import io.github.nailik.androidresampler.data.ResamplerQuality
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.*
@@ -73,9 +77,16 @@ class AudioConverter {
                 pcmData = decodeToPcm(extractor, decoder)
                 outputStream.write(pcmData)
 
-                updateWavHeaderForFile(outputFile, sampleRate, channelCount, bitDepth, pcmData.size)
-            }
 
+
+
+
+            }
+            updateWavHeaderForFile(outputFile, sampleRate, channelCount, bitDepth, pcmData.size)
+            val inputSampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+
+
+            updateWaveToResample(outputFile,inputSampleRate,channelCount)
 
             // IMPORTANT: Update the WAV header with the actual sizes AFTER all data is written and stream is closed
             return@withContext outputFile
@@ -87,6 +98,32 @@ class AudioConverter {
             decoder?.stop()
             decoder?.release()
             // outputStream is closed by .use{} or handled by updateWavHeaderForUri
+        }
+    }
+    private fun updateWaveToResample(file: File, inputSampleRate: Int, inputChannels: Int)
+    {
+        val configuration = ResamplerConfiguration(
+            quality = ResamplerQuality.BEST,
+            inputChannel  = if (inputChannels == 1) ResamplerChannel.MONO else ResamplerChannel.STEREO,
+            inputSampleRate = inputSampleRate,
+            outputChannel = ResamplerChannel.MONO,
+            outputSampleRate = 16000
+        )
+        val resampler = Resampler(configuration)
+        val inputData = file.readBytes()
+        val outputData = resampler.resample(inputData)
+        //file is not playable here
+        file.writeBytes(outputData)
+        resampler.dispose()
+        val header = createWavHeaderWithSizes(
+            sampleRate = 16000,
+            channels = 1,
+            bitsPerSample = 16,
+            dataSize = outputData.size
+        )
+        FileOutputStream(file, false).use { out ->
+            out.write(header)
+            out.write(outputData)
         }
     }
 private fun updateWavHeaderForFile(

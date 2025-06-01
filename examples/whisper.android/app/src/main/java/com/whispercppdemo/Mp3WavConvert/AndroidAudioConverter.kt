@@ -1,420 +1,168 @@
-package com.whispercppdemo.Mp3WavConvert
-
 import android.content.Context
 import android.media.*
 import android.net.Uri
+import android.util.Log
 import java.io.*
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import kotlin.math.*
 
-/**
- * Clean Android-native audio converter using MediaExtractor/MediaFormat
- * Converts MP3/WAV to 16-bit mono WAV files
- */
-class AndroidAudioConverter(private val context: Context) {
+object AudioConverter {
+    private const val TAG = "AudioConverter"
 
-    data class AudioInfo(
-        val sampleRate: Int,
-        val channels: Int,
-        val duration: Long,
-        val bitRate: Int
-    )
+    fun convertToMono16BitPCM(context: Context, inputUri: Uri): File {
+        val outputFile = File(context.cacheDir, "output.wav")
 
-    /**
-     * Convert MP3/audio file to 16-bit mono WAV
-     */
-     fun convertToMono16BitWav(
-        inputUri: Uri,
-        outputFile: File,
-        targetSampleRate: Int = 44100
-    ): Boolean {
-        var extractor: MediaExtractor? = null
-        var decoder: MediaCodec? = null
-
-        try {
-            // Setup MediaExtractor
-            extractor = MediaExtractor().apply {
-                setDataSource(context, inputUri, null)
+        val extractor = MediaExtractor()
+        val inputStream = context.contentResolver.openInputStream(inputUri)
+            ?: throw IOException("Cannot open input stream")
+        val inputFile = File(context.cacheDir, "temp_input")
+        inputStream.use { input ->
+            FileOutputStream(inputFile).use { output ->
+                input.copyTo(output)
             }
-
-            // Find audio track
-            val audioTrack = findAudioTrack(extractor) ?: throw IllegalArgumentException("No audio track found")
-            val format = extractor.getTrackFormat(audioTrack.trackIndex)
-            extractor.selectTrack(audioTrack.trackIndex)
-
-            // Setup MediaCodec decoder
-            val mime = format.getString(MediaFormat.KEY_MIME) ?: throw IllegalArgumentException("No MIME type")
-            decoder = MediaCodec.createDecoderByType(mime)
-
-            // Configure decoder for PCM output
-            val outputFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_RAW, targetSampleRate, 1).apply {
-                setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
-            }
-
-            decoder.configure(format, null, null, 0)
-            decoder.start()
-
-            // Decode and convert
-            val audioData = decodeAudioData(extractor, decoder, audioTrack.info)
-            val monoData = if (audioTrack.info.channels > 1) {
-                downmixToMono(audioData, audioTrack.info.channels)
-            } else {
-                audioData
-            }
-
-            val resampledData = if (audioTrack.info.sampleRate != targetSampleRate) {
-                resample(monoData, audioTrack.info.sampleRate, targetSampleRate)
-            } else {
-                monoData
-            }
-
-            // Convert to 16-bit PCM and write WAV
-            val pcm16Data = convertTo16BitPCM(resampledData)
-            writeWavFile(outputFile, pcm16Data, targetSampleRate)
-
-            return true
-
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return false
-        } finally {
-            decoder?.apply {
-                stop()
-                release()
-            }
-            extractor?.release()
         }
-    }
 
-    /**
-     * Find the first audio track in the media file
-     */
-    private fun findAudioTrack(extractor: MediaExtractor): AudioTrackInfo? {
+        extractor.setDataSource(inputFile.absolutePath)
+
+        // Select the first audio track
+        var trackIndex = -1
         for (i in 0 until extractor.trackCount) {
             val format = extractor.getTrackFormat(i)
             val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
-
             if (mime.startsWith("audio/")) {
-                val sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                val channelCount = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                val duration = if (format.containsKey(MediaFormat.KEY_DURATION)) {
-                    format.getLong(MediaFormat.KEY_DURATION)
-                } else 0L
-                val bitRate = if (format.containsKey(MediaFormat.KEY_BIT_RATE)) {
-                    format.getInteger(MediaFormat.KEY_BIT_RATE)
-                } else 0
-
-                val audioInfo = AudioInfo(sampleRate, channelCount, duration, bitRate)
-                return AudioTrackInfo(i, audioInfo)
+                trackIndex = i
+                break
             }
         }
-        return null
-    }
 
-    /**
-     * Decode audio data using MediaCodec
-     */
-    private fun decodeAudioData(
-        extractor: MediaExtractor,
-        decoder: MediaCodec,
-        audioInfo: AudioInfo
-    ): FloatArray {
-        val audioSamples = mutableListOf<Float>()
-        val inputBuffers = decoder.inputBuffers
-        val outputBuffers = decoder.outputBuffers
-        val info = MediaCodec.BufferInfo()
+        if (trackIndex == -1) throw IOException("No audio track found")
 
-        var isEOS = false
-        var inputDone = false
-        var outputDone = false
+        extractor.selectTrack(trackIndex)
+        val format = extractor.getTrackFormat(trackIndex)
+        val mime = format.getString(MediaFormat.KEY_MIME)!!
 
-        while (!outputDone) {
-            // Feed input to decoder
-            if (!inputDone) {
-                val inputBufferIndex = decoder.dequeueInputBuffer(10000)
+        val codec = MediaCodec.createDecoderByType(mime)
+        codec.configure(format, null, null, 0)
+        codec.start()
+
+        val outputStream = ByteArrayOutputStream()
+        val bufferInfo = MediaCodec.BufferInfo()
+
+        val sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+        val monoSampleRate = 16000
+        val channelCount = 1 // target mono
+
+        var sawOutputEOS = false
+        var sawInputEOS = false
+
+        while (!sawOutputEOS) {
+            if (!sawInputEOS) {
+                val inputBufferIndex = codec.dequeueInputBuffer(10000)
                 if (inputBufferIndex >= 0) {
-                    val inputBuffer = inputBuffers[inputBufferIndex]
+                    val inputBuffer = codec.getInputBuffer(inputBufferIndex)!!
                     val sampleSize = extractor.readSampleData(inputBuffer, 0)
-
                     if (sampleSize < 0) {
-                        decoder.queueInputBuffer(inputBufferIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                        inputDone = true
+                        codec.queueInputBuffer(inputBufferIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                        sawInputEOS = true
                     } else {
                         val presentationTimeUs = extractor.sampleTime
-                        decoder.queueInputBuffer(inputBufferIndex, 0, sampleSize, presentationTimeUs, 0)
+                        codec.queueInputBuffer(inputBufferIndex, 0, sampleSize, presentationTimeUs, 0)
                         extractor.advance()
                     }
                 }
             }
 
-            // Get output from decoder
-            val outputBufferIndex = decoder.dequeueOutputBuffer(info, 10000)
-            when {
-                outputBufferIndex >= 0 -> {
-                    val outputBuffer = outputBuffers[outputBufferIndex]
-                    if (info.size > 0) {
-                        val pcmData = ByteArray(info.size)
-                        outputBuffer.get(pcmData)
-                        outputBuffer.rewind()
+            val outputBufferIndex = codec.dequeueOutputBuffer(bufferInfo, 10000)
+            if (outputBufferIndex >= 0) {
+                val outputBuffer = codec.getOutputBuffer(outputBufferIndex)!!
+                val pcmData = ByteArray(bufferInfo.size)
+                outputBuffer.get(pcmData)
+                outputBuffer.clear()
 
-                        // Convert PCM bytes to float samples
-                        val samples = convertPCMToFloat(pcmData, audioInfo.channels)
-                        audioSamples.addAll(samples)
-                    }
+                // Convert stereo to mono if needed
+                val monoData = toMono16Bit(pcmData, format.getInteger(MediaFormat.KEY_CHANNEL_COUNT))
+                outputStream.write(monoData)
 
-                    decoder.releaseOutputBuffer(outputBufferIndex, false)
+                codec.releaseOutputBuffer(outputBufferIndex, false)
 
-                    if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
-                        outputDone = true
-                    }
-                }
-                outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    // Handle format change if needed
-                }
-                outputBufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER -> {
-                    // Continue loop
+                if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                    sawOutputEOS = true
                 }
             }
         }
 
-        return audioSamples.toFloatArray()
+        codec.stop()
+        codec.release()
+        extractor.release()
+
+        // Write WAV header + data
+        val finalData = outputStream.toByteArray()
+        writeWavFile(outputFile, finalData, monoSampleRate, channelCount)
+
+        return outputFile
     }
 
-    /**
-     * Convert PCM byte data to float samples
-     */
-    private fun convertPCMToFloat(pcmData: ByteArray, channels: Int): List<Float> {
-        val samples = mutableListOf<Float>()
-        val buffer = ByteBuffer.wrap(pcmData).order(ByteOrder.LITTLE_ENDIAN)
+    private fun toMono16Bit(stereoData: ByteArray, numChannels: Int): ByteArray {
+        if (numChannels == 1) return stereoData
 
-        while (buffer.remaining() >= 2) {
-            val sample = buffer.short.toFloat() / 32768f
-            samples.add(sample)
+        val mono = ByteArray(stereoData.size / numChannels)
+        for (i in mono.indices step 2) {
+            val left = ((stereoData[i * 2 + 1].toInt() shl 8) or (stereoData[i * 2].toInt() and 0xff))
+            val right = ((stereoData[i * 2 + 3].toInt() shl 8) or (stereoData[i * 2 + 2].toInt() and 0xff))
+            val mixed = ((left + right) / 2).toShort()
+            mono[i] = (mixed.toInt() and 0xff).toByte()
+            mono[i + 1] = ((mixed.toInt() shr 8) and 0xff).toByte()
         }
-
-        return samples
+        return mono
     }
 
-    /**
-     * Downmix multi-channel audio to mono
-     */
-    private fun downmixToMono(samples: FloatArray, channels: Int): FloatArray {
-        if (channels == 1) return samples
+    private fun writeWavFile(outputFile: File, audioData: ByteArray, sampleRate: Int, channels: Int) {
+        val totalDataLen = 36 + audioData.size
+        val byteRate = sampleRate * channels * 2
 
-        val monoSamples = FloatArray(samples.size / channels)
-        for (i in monoSamples.indices) {
-            var sum = 0f
-            for (ch in 0 until channels) {
-                sum += samples[i * channels + ch]
-            }
-            monoSamples[i] = sum / channels
-        }
-        return monoSamples
-    }
+        val header = ByteArray(44)
+        val audioDataLen = audioData.size
 
-    /**
-     * Simple linear interpolation resampling
-     */
-    private fun resample(samples: FloatArray, fromRate: Int, toRate: Int): FloatArray {
-        if (fromRate == toRate) return samples
+        // RIFF/WAVE header
+        header[0] = 'R'.code.toByte()
+        header[1] = 'I'.code.toByte()
+        header[2] = 'F'.code.toByte()
+        header[3] = 'F'.code.toByte()
+        writeInt(header, 4, totalDataLen)
+        header[8] = 'W'.code.toByte()
+        header[9] = 'A'.code.toByte()
+        header[10] = 'V'.code.toByte()
+        header[11] = 'E'.code.toByte()
+        header[12] = 'f'.code.toByte()
+        header[13] = 'm'.code.toByte()
+        header[14] = 't'.code.toByte()
+        header[15] = ' '.code.toByte()
+        writeInt(header, 16, 16)
+        writeShort(header, 20, 1) // PCM format
+        writeShort(header, 22, channels.toShort())
+        writeInt(header, 24, sampleRate)
+        writeInt(header, 28, byteRate)
+        writeShort(header, 32, (channels * 2).toShort())
+        writeShort(header, 34, 16)
+        header[36] = 'd'.code.toByte()
+        header[37] = 'a'.code.toByte()
+        header[38] = 't'.code.toByte()
+        header[39] = 'a'.code.toByte()
+        writeInt(header, 40, audioDataLen)
 
-        val ratio = fromRate.toDouble() / toRate
-        val newLength = (samples.size / ratio).toInt()
-        val resampled = FloatArray(newLength)
-
-        for (i in resampled.indices) {
-            val srcIndex = i * ratio
-            val index = srcIndex.toInt()
-            val fraction = srcIndex - index
-
-            resampled[i] = if (index + 1 < samples.size) {
-                (samples[index] * (1 - fraction) + samples[index + 1] * fraction).toFloat()
-            } else {
-                samples[index]
-            }
-        }
-
-        return resampled
-    }
-
-    /**
-     * Convert float samples to 16-bit PCM
-     */
-    private fun convertTo16BitPCM(samples: FloatArray): ShortArray {
-        return ShortArray(samples.size) { i ->
-            (samples[i].coerceIn(-1f, 1f) * 32767f).roundToInt().toShort()
+        FileOutputStream(outputFile).use {
+            it.write(header)
+            it.write(audioData)
         }
     }
 
-    /**
-     * Write 16-bit mono WAV file
-     */
-    private fun writeWavFile(file: File, samples: ShortArray, sampleRate: Int) {
-        FileOutputStream(file).use { output ->
-            val dataSize = samples.size * 2
-            val fileSize = 36 + dataSize
-
-            // Write WAV header
-            val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
-
-            // RIFF chunk
-            header.put("RIFF".toByteArray())
-            header.putInt(fileSize)
-            header.put("WAVE".toByteArray())
-
-            // fmt chunk
-            header.put("fmt ".toByteArray())
-            header.putInt(16) // PCM format chunk size
-            header.putShort(1) // PCM format
-            header.putShort(1) // mono
-            header.putInt(sampleRate)
-            header.putInt(sampleRate * 2) // byte rate
-            header.putShort(2) // block align
-            header.putShort(16) // bits per sample
-
-            // data chunk
-            header.put("data".toByteArray())
-            header.putInt(dataSize)
-
-            output.write(header.array())
-
-            // Write sample data
-            val sampleBuffer = ByteBuffer.allocate(samples.size * 2).order(ByteOrder.LITTLE_ENDIAN)
-            samples.forEach { sampleBuffer.putShort(it) }
-            output.write(sampleBuffer.array())
-        }
+    private fun writeInt(buffer: ByteArray, offset: Int, value: Int) {
+        buffer[offset] = (value and 0xff).toByte()
+        buffer[offset + 1] = ((value shr 8) and 0xff).toByte()
+        buffer[offset + 2] = ((value shr 16) and 0xff).toByte()
+        buffer[offset + 3] = ((value shr 24) and 0xff).toByte()
     }
 
-    /**
-     * Get audio file information without conversion
-     */
-    fun getAudioInfo(uri: Uri): AudioInfo? {
-        var extractor: MediaExtractor? = null
-        try {
-            extractor = MediaExtractor().apply {
-                setDataSource(context, uri, null)
-            }
-
-            val audioTrack = findAudioTrack(extractor)
-            return audioTrack?.info
-
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return null
-        } finally {
-            extractor?.release()
-        }
-    }
-
-    private data class AudioTrackInfo(
-        val trackIndex: Int,
-        val info: AudioInfo
-    )
-}
-
-/**
- * Usage example and integration
- */
-class AudioConverterHelper(private val context: Context) {
-
-    private val converter = AndroidAudioConverter(context)
-
-    /**
-     * Convert audio file with progress callback
-     */
-    suspend fun convertAudioFile(
-        inputUri: Uri,
-        outputFileName: String,
-        targetSampleRate: Int = 44100,
-        onProgress: ((String) -> Unit)? = null
-    ): File? {
-        try {
-            onProgress?.invoke("Starting conversion...")
-
-            // Get audio info
-            val audioInfo = converter.getAudioInfo(inputUri)
-            onProgress?.invoke("Audio info: ${audioInfo?.sampleRate}Hz, ${audioInfo?.channels}ch")
-
-            // Create output file
-            val outputFile = File(context.getExternalFilesDir(null), outputFileName)
-
-            onProgress?.invoke("Converting to 16-bit mono WAV...")
-            val success = converter.convertToMono16BitWav(inputUri, outputFile, targetSampleRate)
-
-            return if (success) {
-                onProgress?.invoke("Conversion completed: ${outputFile.absolutePath}")
-                outputFile
-            } else {
-                onProgress?.invoke("Conversion failed")
-                null
-            }
-
-        } catch (e: Exception) {
-            onProgress?.invoke("Error: ${e.message}")
-            return null
-        }
-    }
-
-    /**
-     * Batch convert multiple files
-     */
-    suspend fun batchConvert(
-        inputUris: List<Uri>,
-        outputDir: File,
-        onFileProgress: ((Int, Int, String) -> Unit)? = null
-    ): List<File> {
-        val convertedFiles = mutableListOf<File>()
-
-        inputUris.forEachIndexed { index, uri ->
-            try {
-                val fileName = "converted_${System.currentTimeMillis()}_$index.wav"
-                val outputFile = File(outputDir, fileName)
-
-                onFileProgress?.invoke(index + 1, inputUris.size, "Converting $fileName...")
-
-                val success = converter.convertToMono16BitWav(uri, outputFile)
-                if (success) {
-                    convertedFiles.add(outputFile)
-                }
-
-            } catch (e: Exception) {
-                onFileProgress?.invoke(index + 1, inputUris.size, "Failed: ${e.message}")
-            }
-        }
-
-        return convertedFiles
+    private fun writeShort(buffer: ByteArray, offset: Int, value: Short) {
+        buffer[offset] = (value.toInt() and 0xff).toByte()
+        buffer[offset + 1] = ((value.toInt() shr 8) and 0xff).toByte()
     }
 }
-
-// Example Activity/Fragment usage
-/*
-class MainActivity : AppCompatActivity() {
-    private lateinit var converterHelper: AudioConverterHelper
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        converterHelper = AudioConverterHelper(this)
-    }
-
-    private fun convertSelectedAudio(uri: Uri) {
-        lifecycleScope.launch {
-            val result = converterHelper.convertAudioFile(
-                inputUri = uri,
-                outputFileName = "converted_audio.wav",
-                targetSampleRate = 44100
-            ) { progress ->
-                runOnUiThread {
-                    // Update UI with progress
-                    Toast.makeText(this@MainActivity, progress, Toast.LENGTH_SHORT).show()
-                }
-            }
-
-            result?.let {
-                // Conversion successful
-                Log.d("AudioConverter", "Converted file: ${it.absolutePath}")
-            }
-        }
-    }
-}
-*/
