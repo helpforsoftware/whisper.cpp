@@ -4455,11 +4455,11 @@ struct whisper_vad_context_params whisper_vad_default_context_params(void) {
 struct whisper_vad_params whisper_vad_default_params(void) {
     whisper_vad_params result = {
         /* threshold               = */ 0.5f,
-        /* min_speech_duration_ms  = */ 250,
-        /* min_silence_duration_ms = */ 100,
-        /* max_speech_duration_s   = */ FLT_MAX,
-        /* speech_pad_ms           = */ 30,
-        /* samples_overlap         = */ 0.1,
+        /* min_speech_duration_ms  = */ 100,
+        /* min_silence_duration_ms = */ 0,
+        /* max_speech_duration_s   = */ 1,
+        /* speech_pad_ms           = */ 0,
+        /* samples_overlap         = */ 0,
     };
     return result;
 }
@@ -5930,10 +5930,10 @@ struct whisper_full_params whisper_full_default_params(enum whisper_sampling_str
         /*.print_realtime    =*/ false,
         /*.print_timestamps  =*/ true,
 
-        /*.token_timestamps  =*/ false,
+        /*.token_timestamps  =*/ true,
         /*.thold_pt          =*/ 0.01f,
         /*.thold_ptsum       =*/ 0.01f,
-        /*.max_len           =*/ 5,
+        /*.max_len           =*/ 1,
         /*.split_on_word     =*/ true,
         /*.max_tokens        =*/ 0,
 
@@ -5961,7 +5961,7 @@ struct whisper_full_params whisper_full_default_params(enum whisper_sampling_str
         /*.temperature_inc   =*/  0.2f,
         /*.entropy_thold     =*/  2.4f,
         /*.logprob_thold     =*/ -1.0f,
-        /*.no_speech_thold   =*/  0.01f,
+        /*.no_speech_thold   =*/  0.6f,
 
         /*.greedy            =*/ {
             /*.best_of   =*/ -1,
